@@ -166,27 +166,74 @@ function resolveVote(room) {
   startNight(room);
 }
 function leaveRoom(socket, announceLeave = true) {
+
   const code = socket.data.roomCode;
+
   if (!code) return;
+
   const room = rooms.get(code);
+
+  // Remove socket from the Socket.IO room
   socket.leave(code);
+
+  // Clear the player's current room reference
   socket.data.roomCode = null;
+
   if (!room) return;
-  const p = playerFor(room, socket.id);
-  if (p) {
-    p.connected = false;
-    if (announceLeave) announce(room, `${p.name} disconnected.`);
+
+  // Find the player who is leaving
+  const playerIndex = room.players.findIndex(
+    p => p.id === socket.id
+  );
+
+  if (playerIndex === -1) return;
+
+  const player = room.players[playerIndex];
+
+  // During the lobby, completely remove the player
+  if (room.status === "lobby") {
+
+    // Remove player name, socket ID and player record
+    room.players.splice(playerIndex, 1);
+
+    if (announceLeave) {
+      announce(room, `${player.name} left the room.`);
+    }
+
+  } else {
+
+    // During an active game, retain their seat
+    // to avoid disrupting the ongoing game.
+    player.connected = false;
+
+    if (announceLeave) {
+      announce(room, `${player.name} disconnected.`);
+    }
+
   }
-  // Keep disconnected players in the roster so their role/action history doesn't shift.
-  if (room.players.every(x => !x.connected)) {
+
+  // Delete the room if nobody remains
+  if (room.players.length === 0) {
+
     rooms.delete(code);
+
     return;
   }
+
+  // Transfer host privileges if the host leaves
   if (room.hostId === socket.id) {
-    const next = room.players.find(x => x.connected);
-    room.hostId = next?.id || null;
+
+    const nextHost = room.players.find(
+      p => p.connected
+    );
+
+    room.hostId = nextHost?.id || null;
+
   }
+
+  // Send updated room information to remaining players
   emitRoom(room);
+
 }
 io.on("connection", socket => {
   socket.on("room:create", ({ name }, cb = () => {}) => {
@@ -214,7 +261,31 @@ io.on("connection", socket => {
     if (!room) return cb({ error: "Room not found. Check the code." });
     if (room.status !== "lobby") return cb({ error: "This game has already started." });
     if (room.players.length >= 15) return cb({ error: "This room is full (15 players maximum)." });
-    if (room.players.some(p => p.name.toLowerCase() === playerName.toLowerCase())) return cb({ error: "That name is already in use in this room." });
+    // Remove stale disconnected players before checking names
+    if (room.status === "lobby") {
+
+      room.players = room.players.filter(p => {
+
+        const oldSocket = io.sockets.sockets.get(p.id);
+
+        return oldSocket && oldSocket.connected;
+
+      });
+
+    }
+
+    // Check whether the name is already being used
+    const duplicatePlayer = room.players.find(
+      p => p.name.toLowerCase() === playerName.toLowerCase()
+    );
+
+    if (duplicatePlayer) {
+
+      return cb({
+        error: "That name is already in use in this room."
+      });
+
+    }
     if (socket.data.roomCode) leaveRoom(socket, false);
     room.players.push({ id: socket.id, name: playerName, alive: true, connected: true, role: null });
     socket.join(roomCode); socket.data.roomCode = roomCode;
@@ -292,6 +363,18 @@ io.on("connection", socket => {
     room.players = room.players.filter(p => p.connected).map(p => ({ ...p, role: null, alive: true }));
     announce(room, "A new game is ready. The host can start when everyone is set.");
     emitRoom(room); cb({ ok: true });
+  });
+  
+  socket.on("room:leave", (_, cb = () => {}) => {
+
+    if (!socket.data.roomCode) {
+      return cb({ error: "You are not in a room." });
+    }
+
+    leaveRoom(socket, true);
+
+    cb({ ok: true });
+
   });
 
   socket.on("disconnect", () => leaveRoom(socket));

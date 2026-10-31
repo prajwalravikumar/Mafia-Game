@@ -188,7 +188,41 @@ export default function App() {
           {copied && <div className="success">Invite copied!</div>}
           {error && <div className="alert">{error}</div>}
           {notice && <div className="success">{notice}</div>}
-          <button className="text-button" onClick={()=>{setRoom(null);setPrivateInfo({role:null,alive:true,actionSubmitted:false,isHost:false});setPoliceResult(null);setError("");setNotice("");}}>Leave view</button>
+          <button
+          className="text-button"
+            onClick={() => {
+
+              setError("");
+              setNotice("");
+
+              socket.emit("room:leave", {}, (result) => {
+
+                if (result?.error) {
+                  setError(result.error);
+                  return;
+                }
+
+                // Clear local game state
+                setRoom(null);
+
+                setPrivateInfo({
+                  role: null,
+                  alive: true,
+                  actionSubmitted: false,
+                  isHost: false
+                });
+
+                setPoliceResult(null);
+                setSelectedTarget("");
+
+                setNotice("You have successfully left the room.");
+
+              });
+
+            }}
+          >
+            Leave Room
+          </button>
         </aside>
       </div>
       <footer>KAMAKSHIPALYA MAFIA<span>•</span> KEEP YOUR ROLE SECRET</footer>
